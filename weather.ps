@@ -1,0 +1,97 @@
+import numpy as np
+from pgmpy.models import BayesianNetwork
+from pgmpy.inference import VariableElimination
+from sklearn.linear_model import LogisticRegression
+import requests  # For API calls
+from datetime import datetime
+
+def fetch_weather_api_data(city, date, api_key):
+    """Fetch hourly weather data from OpenWeatherMap API."""
+    # Placeholder: Simulate API response
+    # Real implementation: Use requests.get(f'https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={api_key}')
+    hourly_data = []
+    for hour in range(24):
+        hourly_data.append({
+            'hour': hour,
+            'precip_prob': 0.24,  # 24% chance
+            'cloud_cover': 'mostly_cloudy',
+            'humidity': 0.73,  # 73%
+            'wind_speed': 5.0,  # 5 m/s
+            'pressure': 1010  # 1010 hPa
+        })
+    return hourly_data
+
+def train_cpt_model(historical_data):
+    """Train logistic regression to estimate P(Rain | Features)."""
+    # Synthetic historical data (replace with real data)
+    X = np.array([
+        [0.2, 0.6, 0.7, 4.0, 1012],  # Dry day
+        [0.8, 1.0, 0.9, 6.0, 1008],  # Rainy day
+        # Add more rows...
+    ])
+    y = np.array([0, 1])  # 0: No rain, 1: Rain
+    model = LogisticRegression()
+    model.fit(X, y)
+    return model
+
+def rain_reasoning_algorithm(api_key, city='Turku,FI', date='2025-04-25'):
+    # Step 1: Fetch real-time data
+    hourly_data = fetch_weather_api_data(city, date, api_key)
+    
+    # Step 2: Train CPT model
+    cpt_model = train_cpt_model(historical_data=None)  # Replace with real data
+    
+    # Step 3: Initialize Bayesian network
+    bayes_net = BayesianNetwork([
+        ('Precipitation_Probability', 'Rain'),
+        ('Cloud_Cover', 'Rain'),
+        ('Humidity', 'Rain'),
+        ('Wind_Speed', 'Rain'),
+        ('Pressure', 'Rain')
+    ])
+    
+    # Step 4: Process hourly predictions
+    results = []
+    for data in hourly_data:
+        hour = data['hour']
+        
+        # Extract evidence
+        evidence = {
+            'Precipitation_Probability': data['precip_prob'],
+            'Cloud_Cover': data['cloud_cover'],
+            'Humidity': data['humidity'],
+            'Wind_Speed': data['wind_speed'],
+            'Pressure': data['pressure']
+        }
+        
+        # Use logistic regression to estimate P(Rain | Evidence)
+        features = np.array([[
+            evidence['Precipitation_Probability'],
+            0.75 if evidence['Cloud_Cover'] == 'mostly_cloudy' else 0.5,
+            evidence['Humidity'],
+            evidence['Wind_Speed'],
+            evidence['Pressure'] / 1000  # Normalize
+        ]])
+        prob_rain = cpt_model.predict_proba(features)[0][1]
+        
+        # Decision rule
+        conclusion = 'Rain likely' if prob_rain > 0.5 else 'No rain likely'
+        
+        results.append({
+            'hour': f'{hour:02d}:00',
+            'probability': prob_rain,
+            'conclusion': conclusion
+        })
+    
+    # Step 5: Summarize daily conclusion
+    daily_prob = np.mean([r['probability'] for r in results])
+    daily_conclusion = 'Rain likely today' if daily_prob > 0.5 else 'No rain likely today'
+    
+    return {'hourly': results, 'daily': {'probability': daily_prob, 'conclusion': daily_conclusion}}
+
+# Example usage
+api_key = 'your_openweathermap_api_key'  # Replace with real key
+result = rain_reasoning_algorithm(api_key)
+for hour_data in result['hourly']:
+    print(f"Hour: {hour_data['hour']}, P(Rain): {hour_data['probability']:.2f}, {hour_data['conclusion']}")
+print(f"Daily: P(Rain): {result['daily']['probability']:.2f}, {result['daily']['conclusion']}")
