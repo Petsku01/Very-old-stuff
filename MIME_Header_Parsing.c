@@ -55,3 +55,16 @@ System: The response was cut off due to exceeding the maximum token limit. Below
 
     return MIME_OK;
 }
+
+
+
+
+
+
+#include <iconv.h>
+char *to_utf8(const char *input) {
+    iconv_t cd = iconv_open("UTF-8", "ISO-8859-1");
+    /* Convert input to UTF-8 */
+    /* ... */
+    return converted;
+}
