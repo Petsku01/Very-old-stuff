@@ -1,0 +1,77 @@
+<?php
+session_start();
+require_once 'config.php';
+
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
+}
+
+$ticket_id = $_GET['id'];
+$user_id = $_SESSION['user_id'];
+
+// Get ticket details
+$stmt = $conn->prepare("SELECT t.*, u.username FROM tickets t JOIN users u ON t.user_id = u.id WHERE t.id = ?");
+$stmt->bind_param("i", $ticket_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$ticket = $result->fetch_assoc();
+
+// Verify user can view this ticket
+if (!$ticket || ($ticket['user_id'] != $user_id && !$user['is_admin'])) {
+    header("Location: index.php");
+    exit();
+}
+
+// Handle status update (for admins)
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status']) && $user['is_admin']) {
+    $new_status = $_POST['status'];
+    $stmt = $conn->prepare("UPDATE tickets SET status = ? WHERE id = ?");
+    $stmt->bind_param("si", $new_status, $ticket_id);
+    $stmt->execute();
+    header("Location: view_ticket.php?id=$ticket_id");
+    exit();
+}
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ticket #<?php echo $ticket_id; ?></title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Ticket #<?php echo $ticket_id; ?></h1>
+        <p><strong>Title:</strong> <?php echo htmlspecialchars($ticket['title']); ?></p>
+        <p><strong>Description:</strong> <?php echo htmlspecialchars($ticket['description']); ?></p>
+        <p><strong>Status:</strong> <?php echo $ticket['status']; ?></p>
+        <p><strong>Created by:</strong> <?php echo htmlspecialchars($ticket['username']); ?></p>
+        <p><strong>Created at:</strong> <?php echo $ticket['created_at']; ?></p>
+        
+        <?php if ($user['is_admin']): ?>
+        <h2>Update Status</h2>
+        <form method="post">
+            <select name="status">
+                <option value="open" <?php echo $ticket['status'] == 'open' ? 'selected' : ''; ?>>Open</option>
+                <option value="in_progress" <?php echo $ticket['status'] == 'in_progress' ? 'selected' : ''; ?>>In Progress</option>
+                <option value="closed" <?php echo $ticket['status'] == 'closed' ? 'selected' : ''; ?>>Closed</option>
+            </select>
+            <input type="submit" name="update_status" value="Update Status">
+        </form>
+        <?php endif; ?>
+        
+        <p><a href="index.php">Back to Tickets</a></p>
+    </div>
+</body>
+</html>
+
+<?php
+$stmt->close();
+$conn->close();
+?>

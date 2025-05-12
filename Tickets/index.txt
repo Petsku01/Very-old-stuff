@@ -1,0 +1,86 @@
+<?php
+session_start();
+require_once 'config.php';
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// Database connection
+$conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
+}
+
+// Get user info
+$user_id = $_SESSION['user_id'];
+$stmt = $conn->prepare("SELECT username, is_admin FROM users WHERE id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$user = $result->fetch_assoc();
+
+// Handle ticket creation
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_ticket'])) {
+    $title = $_POST['title'];
+    $description = $_POST['description'];
+    $status = 'open';
+    
+    $stmt = $conn->prepare("INSERT INTO tickets (user_id, title, description, status, created_at) VALUES (?, ?, ?, ?, NOW())");
+    $stmt->bind_param("isss", $user_id, $title, $description, $status);
+    $stmt->execute();
+}
+
+// Get tickets
+$where_clause = $user['is_admin'] ? "" : "WHERE user_id = $user_id";
+$tickets_query = "SELECT id, title, status, created_at FROM tickets $where_clause ORDER BY created_at DESC";
+$tickets_result = $conn->query($tickets_query);
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Helpdesk Ticketing System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome, <?php echo htmlspecialchars($user['username']); ?></h1>
+        <a href="logout.php">Logout</a>
+        
+        <h2>Create New Ticket</h2>
+        <form method="post">
+            <input type="text" name="title" placeholder="Ticket Title" required><br>
+            <textarea name="description" placeholder="Description" required></textarea><br>
+            <input type="submit" name="create_ticket" value="Create Ticket">
+        </form>
+        
+        <h2>Your Tickets</h2>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Action</th>
+            </tr>
+            <?php while ($ticket = $tickets_result->fetch_assoc()): ?>
+            <tr>
+                <td><?php echo $ticket['id']; ?></td>
+                <td><?php echo htmlspecialchars($ticket['title']); ?></td>
+                <td><?php echo $ticket['status']; ?></td>
+                <td><?php echo $ticket['created_at']; ?></td>
+                <td><a href="view_ticket.php?id=<?php echo $ticket['id']; ?>">View</a></td>
+            </tr>
+            <?php endwhile; ?>
+        </table>
+    </div>
+</body>
+</html>
+
+<?php
+$stmt->close();
+$conn->close();
+?>
