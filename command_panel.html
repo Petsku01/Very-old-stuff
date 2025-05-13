@@ -1,0 +1,499 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html>
+<head>
+    <title>SV2 Command Panel</title>
+    <style type="text/css">
+        body {
+            background-color: black;
+            color: #00FF00;
+            font-family: "Courier", monospace;
+            font-size: 12pt;
+            background-image: url('/images/tokyo_skyline.gif');
+        }
+        .command {
+            border: 1px solid #00FF00;
+            padding: 10px;
+            margin: 10px;
+            position: relative;
+            z-index: 1;
+        }
+        .ascii-joystick {
+            font-size: 10pt;
+            line-height: 1;
+            white-space: pre;
+        }
+        select, input, button {
+            background-color: black;
+            color: #00FF00;
+            border: 1px solid #00FF00;
+            font-family: "Courier", monospace;
+            z-index: 2;
+        }
+        .selected {
+            background-color: #009900;
+            color: #00FF00;
+        }
+        .cursor {
+            position: absolute;
+            color: #00FF00;
+            font-size: 10pt;
+            z-index: 3;
+        }
+        .blink {
+            text-decoration: blink;
+        }
+        .overlay {
+            position: absolute;
+            top: 50px;
+            left: 50px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: #00FF00;
+            padding: 5px;
+            border: 1px solid #00FF00;
+            z-index: 4;
+        }
+        .crt-border {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+        }
+    </style>
+    <script language="JavaScript">
+        var logs = [];
+        var currentSection = "action";
+        var currentIndex = 0;
+        var cursorX = 10;
+        var cursorY = 100;
+        var params = {
+            action: "",
+            unit: "1",
+            direction: "forward",
+            distance: "1.0",
+            weapon: "revolver_cannon",
+            mode: "standard",
+            formation: "line",
+            target_id: "0",
+            target_distance: "500",
+            location: "Tokyo Bay"
+        };
+        var inMapMode = false;
+
+        function addLog(message) {
+            logs.push(new Date().toLocaleTimeString() + ": " + message);
+            if (logs.length > 10) logs.shift();
+            parent.frames["tactical"].document.getElementById("logs").innerHTML = logs.join("<br>");
+            parent.frames["tactical"].document.getElementById("logs").scrollTop = parent.frames["tactical"].document.getElementById("logs").scrollHeight;
+            new Audio("/sounds/radio.wav").play();
+            if (message.indexOf("damage") != -1) {
+                parent.frames["tactical"].glitchScreen();
+            }
+        }
+
+        function submitCommand() {
+            if (!params.action) {
+                addLog("Error: Select an action");
+                new Audio("/sounds/error.wav").play();
+                return;
+            }
+            var xhr = new ActiveXObject("Microsoft.XMLHTTP") || new XMLHttpRequest();
+            var url = "patlabor.cgi?action=" + escape(params.action);
+            if (params.action == "move") {
+                url += "&unit=" + params.unit + "&direction=" + params.direction + "&distance=" + params.distance;
+                if (parent.frames["tactical"].waypoints.length > 0) {
+                    var wp = parent.frames["tactical"].waypoints[0];
+                    url += "&x=" + wp.x + "&y=" + wp.y;
+                    parent.frames["tactical"].waypoints = [];
+                }
+                new Audio("/sounds/step.wav").play();
+            } else if (params.action == "fire") {
+                url += "&unit=" + params.unit + "&weapon=" + params.weapon;
+                new Audio("/sounds/fire.wav").play();
+            } else if (params.action == "reload") {
+                url += "&unit=" + params.unit + "&weapon=" + params.weapon;
+                new Audio("/sounds/reload.wav").play();
+            } else if (params.action == "shield" || params.action == "diagnostics") {
+                url += "&unit=" + params.unit;
+            } else if (params.action == "mode") {
+                url += "&unit=" + params.unit + "&mode=" + params.mode;
+            } else if (params.action == "formation") {
+                url += "&formation=" + params.formation;
+            } else if (params.action == "attack") {
+                url += "&target_id=" + params.target_id + "&distance=" + params.target_distance;
+                new Audio("/sounds/fire.wav").play();
+            } else if (params.action == "deploy") {
+                url += "&location=" + params.location;
+            }
+            xhr.open("GET", url, true);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState == 4) {
+                    if (xhr.status == 200) {
+                        addLog(xhr.responseText.replace(/\n/g, "<br>"));
+                        if (params.action == "status" || params.action == "move" || params.action == "deploy") {
+                            parent.frames["tactical"].updateStatus();
+                            parent.frames["tactical"].updateTacticalMap();
+                        }
+                        if (Math.random() < 0.1) {
+                            addLog("Noa Izumi: 'Al, let's roll!'");
+                        }
+                    } else {
+                        addLog("Error: Server responded with status " + xhr.status);
+                        new Audio("/sounds/error.wav").play();
+                    }
+                }
+            };
+            xhr.send(null);
+            new Audio("/sounds/beep.wav").play();
+        }
+
+        function updateUI() {
+            var actionSelect = document.forms["commandForm"].action;
+            var unitSelect = document.forms["commandForm"].unit;
+            var options = actionSelect.options;
+            for (var i = 0; i < options.length; i++) {
+                options[i].className = (currentSection == "action" && i == currentIndex) ? "selected" : "";
+            }
+            unitSelect.className = currentSection == "unit" ? "selected" : "";
+            document.getElementById("moveFields").style.display = params.action == "move" && !inMapMode ? "block" : "none";
+            document.getElementById("weaponFields").style.display = (params.action == "fire" || params.action == "reload") ? "block" : "none";
+            document.getElementById("modeFields").style.display = params.action == "mode" ? "block" : "none";
+            document.getElementById("formationFields").style.display = params.action == "formation" ? "block" : "none";
+            document.getElementById("attackFields").style.display = params.action == "attack" && !inMapMode ? "block" : "none";
+            document.getElementById("deployFields").style.display = params.action == "deploy" ? "block" : "none";
+            actionSelect.value = params.action;
+            unitSelect.value = params.unit;
+            document.forms["commandForm"].direction.value = params.direction;
+            document.forms["commandForm"].distance.value = params.distance;
+            document.forms["commandForm"].weapon.value = params.weapon;
+            document.forms["commandForm"].mode.value = params.mode;
+            document.forms["commandForm"].formation.value = params.formation;
+            document.forms["commandForm"].target_id.value = params.target_id;
+            document.forms["commandForm"].target_distance.value = params.target_distance;
+            document.forms["commandForm"].location.value = params.location;
+            var cursor = document.getElementById("cursor");
+            cursor.style.top = (inMapMode ? 0 : currentSection == "action" ? 100 + currentIndex * 20 : currentSection == "unit" ? 200 : 240) + "px";
+            cursor.style.left = cursorX + "px";
+            cursor.style.display = inMapMode ? "none" : "block";
+            var overlay = document.getElementById("overlay");
+            overlay.innerHTML = inMapMode ? "MAP MODE: (" + parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY + ")" : 
+                currentSection == "action" ? "SELECT COMMAND" : currentSection == "unit" ? "SELECT UNIT" : "SET PARAMETERS";
+        }
+
+        function handleKeyDown(event) {
+            var key = event.keyCode || event.which;
+            if (inMapMode) {
+                if (key == 38) { // Up
+                    parent.frames["tactical"].moveCursor(0, -1);
+                } else if (key == 40) { // Down
+                    parent.frames["tactical"].moveCursor(0, 1);
+                } else if (key == 37) { // Left
+                    parent.frames["tactical"].moveCursor(-1, 0);
+                } else if (key == 39) { // Right
+                    parent.frames["tactical"].moveCursor(1, 0);
+                } else if (key == 13) { // Enter
+                    if (params.action == "move") {
+                        parent.frames["tactical"].waypoints.push({x: parent.frames["tactical"].cursorX, y: parent.frames["tactical"].cursorY});
+                        addLog("Waypoint set at (" + parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY + ")");
+                        new Audio("/sounds/lock.wav").play();
+                        submitCommand();
+                        inMapMode = false;
+                    } else if (params.action == "attack") {
+                        params.target_id = parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY;
+                        addLog("Target locked at (" + parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY + ")");
+                        new Audio("/sounds/lock.wav").play();
+                        submitCommand();
+                        inMapMode = false;
+                    }
+                } else if (key == 27) { // Esc
+                    inMapMode = false;
+                }
+            } else {
+                if (currentSection == "action") {
+                    if (key == 38) { // Up
+                        currentIndex = Math.max(0, currentIndex - 1);
+                        cursorY -= 20;
+                    } else if (key == 40) { // Down
+                        currentIndex = Math.min(document.forms["commandForm"].action.options.length - 1, currentIndex + 1);
+                        cursorY += 20;
+                    } else if (key == 13) { // Enter
+                        params.action = document.forms["commandForm"].action.options[currentIndex].value;
+                        currentSection = "unit";
+                        cursorY = 200;
+                    } else if (key == 27) { // Esc
+                        params.action = "";
+                        currentIndex = 0;
+                        cursorY = 100;
+                    }
+                } else if (currentSection == "unit") {
+                    if (key == 37) { // Left
+                        params.unit = params.unit == "1" ? "2" : "1";
+                        cursorX -= 20;
+                    } else if (key == 39) { // Right
+                        params.unit = params.unit == "1" ? "2" : "1";
+                        cursorX += 20;
+                    } else if (key == 13) {
+                        if (params.action == "move" || params.action == "attack") {
+                            inMapMode = true;
+                        } else if (params.action == "fire" || params.action == "reload") {
+                            currentSection = "weapon";
+                            cursorY = 240;
+                        } else if (params.action == "mode") {
+                            currentSection = "mode";
+                            cursorY = 240;
+                        } else if (params.action == "formation") {
+                            currentSection = "formation";
+                            cursorY = 240;
+                        } else if (params.action == "deploy") {
+                            currentSection = "location";
+                            cursorY = 240;
+                        } else {
+                            submitCommand();
+                            currentSection = "action";
+                            currentIndex = 0;
+                            cursorY = 100;
+                        }
+                    } else if (key == 27) {
+                        currentSection = "action";
+                        cursorY = 100;
+                    }
+                } else if (currentSection == "direction") {
+                    var directions = ["forward", "backward", "left", "right"];
+                    var idx = directions.indexOf(params.direction);
+                    if (key == 37) {
+                        idx = (idx - 1 + directions.length) % directions.length;
+                        cursorX -= 20;
+                    } else if (key == 39) {
+                        idx = (idx + 1) % directions.length;
+                        cursorX += 20;
+                    } else if (key == 13) {
+                        currentSection = "distance";
+                        cursorY += 20;
+                    } else if (key == 27) {
+                        currentSection = "unit";
+                        cursorY = 200;
+                    }
+                    params.direction = directions[idx];
+                } else if (currentSection == "distance") {
+                    var dist = parseFloat(params.distance);
+                    if (key == 37) {
+                        dist = Math.max(0.1, dist - 0.1);
+                        cursorX -= 10;
+                    } else if (key == 39) {
+                        dist += 0.1;
+                        cursorX += 10;
+                    } else if (key == 13) {
+                        submitCommand();
+                        currentSection = "action";
+                        currentIndex = 0;
+                        cursorY = 100;
+                    } else if (key == 27) {
+                        currentSection = "direction";
+                        cursorY -= 20;
+                    }
+                    params.distance = dist.toFixed(1);
+                } else if (currentSection == "weapon") {
+                    var weapons = ["revolver_cannon", "riot_gun"];
+                    var idx = weapons.indexOf(params.weapon);
+                    if (key == 37) {
+                        idx = (idx - 1 + weapons.length) % weapons.length;
+                        cursorX -= 20;
+                    } else if (key == 39) {
+                        idx = (idx + 1) % weapons.length;
+                        cursorX += 20;
+                    } else if (key == 13) {
+                        submitCommand();
+                        currentSection = "action";
+                        currentIndex = 0;
+                        cursorY = 100;
+                    } else if (key == 27) {
+                        currentSection = "unit";
+                        cursorY = 200;
+                    }
+                    params.weapon = weapons[idx];
+                } else if (currentSection == "mode") {
+                    var modes = ["standard", "high_mobility", "maintenance"];
+                    var idx = modes.indexOf(params.mode);
+                    if (key == 37) {
+                        idx = (idx - 1 + modes.length) % modes.length;
+                        cursorX -= 20;
+                    } else if (key == 39) {
+                        idx = (idx + 1) % modes.length;
+                        cursorX += 20;
+                    } else if (key == 13) {
+                        submitCommand();
+                        currentSection = "action";
+                        currentIndex = 0;
+                        cursorY = 100;
+                    } else if (key == 27) {
+                        currentSection = "unit";
+                        cursorY = 200;
+                    }
+                    params.mode = modes[idx];
+                } else if (currentSection == "formation") {
+                    var formations = ["line", "wedge", "dispersed"];
+                    var idx = formations.indexOf(params.formation);
+                    if (key == 37) {
+                        idx = (idx - 1 + formations.length) % formations.length;
+                        cursorX -= 20;
+                    } else if (key == 39) {
+                        idx = (idx + 1) % formations.length;
+                        cursorX += 20;
+                    } else if (key == 13) {
+                        submitCommand();
+                        currentSection = "action";
+                        currentIndex = 0;
+                        cursorY = 100;
+                    } else if (key == 27) {
+                        currentSection = "unit";
+                        cursorY = 200;
+                    }
+                    params.formation = formations[idx];
+                } else if (currentSection == "target_id") {
+                    var id = parseInt(params.target_id.split(",")[0] || 0);
+                    if (key == 37) {
+                        id = Math.max(0, id - 1);
+                        cursorX -= 10;
+                    } else if (key == 39) {
+                        id += 1;
+                        cursorX += 10;
+                    } else if (key == 13) {
+                        currentSection = "target_distance";
+                        cursorY += 20;
+                    } else if (key == 27) {
+                        currentSection = "unit";
+                        cursorY = 200;
+                    }
+                    params.target_id = id + ",0";
+                } else if (currentSection == "target_distance") {
+                    var dist = parseFloat(params.target_distance);
+                    if (key == 37) {
+                        dist = Math.max(50, dist - 50);
+                        cursorX -= 10;
+                    } else if (key == 39) {
+                        dist += 50;
+                        cursorX += 10;
+                    } else if (key == 13) {
+                        submitCommand();
+                        currentSection = "action";
+                        currentIndex = 0;
+                        cursorY = 100;
+                    } else if (key == 27) {
+                        currentSection = "target_id";
+                        cursorY -= 20;
+                    }
+                    params.target_distance = dist.toString();
+                } else if (currentSection == "location") {
+                    var locations = ["Tokyo Bay", "Shinjuku", "Yokohama"];
+                    var idx = locations.indexOf(params.location);
+                    if (key == 37) {
+                        idx = (idx - 1 + locations.length) % locations.length;
+                        cursorX -= 20;
+                    } else if (key == 39) {
+                        idx = (idx + 1) % locations.length;
+                        cursorX += 20;
+                    } else if (key == 13) {
+                        submitCommand();
+                        currentSection = "action";
+                        currentIndex = 0;
+                        cursorY = 100;
+                    } else if (key == 27) {
+                        currentSection = "unit";
+                        cursorY = 200;
+                    }
+                    params.location = locations[idx];
+                }
+                if (key == 32) { // Space
+                    if (params.action == "move" || params.action == "attack") {
+                        inMapMode = !inMapMode;
+                    } else {
+                        currentSection = currentSection == "action" ? "unit" : "action";
+                        cursorY = currentSection == "action" ? 100 : 200;
+                    }
+                }
+            }
+            cursorX = Math.max(10, Math.min(300, cursorX));
+            cursorY = Math.max(100, Math.min(400, cursorY));
+            updateUI();
+            new Audio("/sounds/click.wav").play();
+        }
+
+        window.onload = function() {
+            document.onkeydown = handleKeyDown;
+            updateUI();
+            addLog("Command panel online");
+        };
+    </script>
+</head>
+<body>
+    <img src="/images/crt_border.gif" class="crt-border">
+    <div class="command">
+        <h2 class="blink">Command Panel</h2>
+        <pre class="ascii-joystick">
+  [==]=====\\ JOYSTICK CONTROL
+  /||\\    |
+  /||\\    |
+  /  \\//  /
+  /  /|  /
+ /  / | /
+/  /  |/
+  O  O  A B
+        </pre>
+        <img src="/images/mech_arm.gif" style="float:right;">
+        <div class="overlay" id="overlay">SELECT COMMAND</div>
+        <form name="commandForm">
+            <select name="action">
+                <option value="">Select Action</option>
+                <option value="status">Status</option>
+                <option value="deploy">Deploy</option>
+                <option value="move">Move</option>
+                <option value="scan">Scan</option>
+                <option value="fire">Fire</option>
+                <option value="reload">Reload</option>
+                <option value="shield">Shield</option>
+                <option value="mode">Switch Mode</option>
+                <option value="diagnostics">Diagnostics</option>
+                <option value="formation">Set Formation</option>
+                <option value="attack">Attack</option>
+            </select><br><br>
+            Unit: <select name="unit">
+                <option value="1">Unit 1</option>
+                <option value="2">Unit 2</option>
+            </select><br><br>
+            <div id="moveFields" style="display:none;">
+                Direction: <input type="text" name="direction" value="forward"><br>
+                Distance (km): <input type="text" name="distance" value="1.0"><br>
+            </div>
+            <div id="weaponFields" style="display:none;">
+                Weapon: <select name="weapon">
+                    <option value="revolver_cannon">Revolver Cannon</option>
+                    <option value="riot_gun">Riot Gun</option>
+                </select><br>
+            </div>
+            <div id="modeFields" style="display:none;">
+                Mode: <select name="mode">
+                    <option value="standard">Standard</option>
+                    <option value="high_mobility">High Mobility</option>
+                    <option value="maintenance">Maintenance</option>
+                </select><br>
+            </div>
+            <div id="formationFields" style="display:none;">
+                Formation: <select name="formation">
+                    <option value="line">Line</option>
+                    <option value="wedge">Wedge</option>
+                    <option value="dispersed">Dispersed</option>
+                </select><br>
+            </div>
+            <div id="attackFields" style="display:none;">
+                Target ID: <input type="text" name="target_id" value="0"><br>
+                Distance (m): <input type="text" name="target_distance" value="500"><br>
+            </div>
+            <div id="deployFields" style="display:none;">
+                Location: <input type="text" name="location" value="Tokyo Bay"><br>
+            </div>
+            <br>
+            <button type="button" onclick="submitCommand()">Execute</button>
+        </form>
+        <div id="cursor" class="cursor blink">></div>
+    </div>
+</body>
+</html>
