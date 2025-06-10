@@ -2,70 +2,74 @@
 <html>
 <head>
     <title>SV2 Command Panel</title>
+    <!-- Defines the document title displayed in the browser tab -->
     <style type="text/css">
+        /* Sets the page's visual theme to resemble a retro CRT terminal */
         body {
             background-color: black;
-            color: #00FF00;
-            font-family: "Courier", monospace;
+            color: #00FF00; /* Green text for CRT effect */
+            font-family: "Courier", monospace; /* Monospace font for terminal aesthetic */
             font-size: 12pt;
-            background-image: url('/images/tokyo_skyline.gif');
+            background-image: url('/images/tokyo_skyline.gif'); /* Background image */
         }
         .command {
-            border: 1px solid #00FF00;
+            border: 1px solid #00FF00; /* Green border for command panel */
             padding: 10px;
             margin: 10px;
             position: relative;
-            z-index: 1;
+            z-index: 1; /* Ensures command panel is above background */
         }
         .ascii-joystick {
             font-size: 10pt;
             line-height: 1;
-            white-space: pre;
+            white-space: pre; /* Preserves ASCII art formatting */
         }
         select, input, button {
             background-color: black;
             color: #00FF00;
-            border: 1px solid #00FF00;
+            border: 1px solid #00FF00; /* Consistent green styling for inputs */
             font-family: "Courier", monospace;
-            z-index: 2;
+            z-index: 2; /* Places inputs above command panel */
         }
         .selected {
-            background-color: #009900;
+            background-color: #009900; /* Darker green for selected elements */
             color: #00FF00;
         }
         .cursor {
             position: absolute;
             color: #00FF00;
             font-size: 10pt;
-            z-index: 3;
+            z-index: 3; /* Cursor above inputs */
         }
         .blink {
-            text-decoration: blink;
+            text-decoration: blink; /* Blinking text effect for retro feel */
         }
         .overlay {
             position: absolute;
             top: 50px;
             left: 50px;
-            background-color: rgba(0, 0, 0, 0.5);
+            background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent overlay */
             color: #00FF00;
             padding: 5px;
             border: 1px solid #00FF00;
-            z-index: 4;
+            z-index: 4; /* Overlay above all other elements */
         }
         .crt-border {
             position: absolute;
             top: 0;
             left: 0;
-            z-index: 0;
+            z-index: 0; /* Background CRT border image */
         }
     </style>
     <script language="JavaScript">
-        var logs = [];
-        var currentSection = "action";
-        var currentIndex = 0;
-        var cursorX = 10;
-        var cursorY = 100;
+        // Global variables for state management
+        var logs = []; // Stores command logs
+        var currentSection = "action"; // Tracks current UI section
+        var currentIndex = 0; // Tracks selected option index
+        var cursorX = 10; // Cursor X position
+        var cursorY = 100; // Cursor Y position
         var params = {
+            // Default parameters for commands
             action: "",
             unit: "1",
             direction: "forward",
@@ -77,27 +81,30 @@
             target_distance: "500",
             location: "Tokyo Bay"
         };
-        var inMapMode = false;
+        var inMapMode = false; // Tracks if map mode is active
 
+        // Adds a message to the log and updates the tactical frame
         function addLog(message) {
             logs.push(new Date().toLocaleTimeString() + ": " + message);
-            if (logs.length > 10) logs.shift();
+            if (logs.length > 10) logs.shift(); // Limits log to 10 entries
             parent.frames["tactical"].document.getElementById("logs").innerHTML = logs.join("<br>");
-            parent.frames["tactical"].document.getElementById("logs").scrollTop = parent.frames["tactical"].document.getElementById("logs").scrollHeight;
-            new Audio("/sounds/radio.wav").play();
+            parent.frames["tactical"].document.getElementById("logs").scrollTop = parent.frames["tactical"].document.getElementById("logs").scrollHeight; // Auto-scrolls to latest log
+            new Audio("/sounds/radio.wav").play(); // Plays sound effect
             if (message.indexOf("damage") != -1) {
-                parent.frames["tactical"].glitchScreen();
+                parent.frames["tactical"].glitchScreen(); // Triggers glitch effect on damage
             }
         }
 
+        // Sends command to server and handles response
         function submitCommand() {
             if (!params.action) {
                 addLog("Error: Select an action");
                 new Audio("/sounds/error.wav").play();
                 return;
             }
-            var xhr = new ActiveXObject("Microsoft.XMLHTTP") || new XMLHttpRequest();
-            var url = "patlabor.cgi?action=" + escape(params.action);
+            var xhr = new ActiveXObject("Microsoft.XMLHTTP") || new XMLHttpRequest(); // Supports older browsers
+            var url = "patlabor.cgi?action=" + escape(params.action); // Builds URL for server request
+            // Appends parameters based on action type
             if (params.action == "move") {
                 url += "&unit=" + params.unit + "&direction=" + params.direction + "&distance=" + params.distance;
                 if (parent.frames["tactical"].waypoints.length > 0) {
@@ -124,15 +131,17 @@
             } else if (params.action == "deploy") {
                 url += "&location=" + params.location;
             }
-            xhr.open("GET", url, true);
+            xhr.open("GET", url, true); // Initiates asynchronous GET request
             xhr.onreadystatechange = function() {
-                if (xhr.readyState == 4) {
-                    if (xhr.status == 200) {
+                if (xhr.readyState == 4) { // Request complete
+                    if (xhr.status == 200) { // Success
                         addLog(xhr.responseText.replace(/\n/g, "<br>"));
+                        // Updates tactical frame for specific actions
                         if (params.action == "status" || params.action == "move" || params.action == "deploy") {
                             parent.frames["tactical"].updateStatus();
                             parent.frames["tactical"].updateTacticalMap();
                         }
+                        // Randomly adds a character quote
                         if (Math.random() < 0.1) {
                             addLog("Noa Izumi: 'Al, let's roll!'");
                         }
@@ -142,24 +151,28 @@
                     }
                 }
             };
-            xhr.send(null);
+            xhr.send(null); // Sends request
             new Audio("/sounds/beep.wav").play();
         }
 
+        // Updates the UI based on current state
         function updateUI() {
             var actionSelect = document.forms["commandForm"].action;
             var unitSelect = document.forms["commandForm"].unit;
             var options = actionSelect.options;
+            // Highlights selected action
             for (var i = 0; i < options.length; i++) {
                 options[i].className = (currentSection == "action" && i == currentIndex) ? "selected" : "";
             }
             unitSelect.className = currentSection == "unit" ? "selected" : "";
+            // Shows/hides parameter fields based on action
             document.getElementById("moveFields").style.display = params.action == "move" && !inMapMode ? "block" : "none";
             document.getElementById("weaponFields").style.display = (params.action == "fire" || params.action == "reload") ? "block" : "none";
             document.getElementById("modeFields").style.display = params.action == "mode" ? "block" : "none";
             document.getElementById("formationFields").style.display = params.action == "formation" ? "block" : "none";
             document.getElementById("attackFields").style.display = params.action == "attack" && !inMapMode ? "block" : "none";
             document.getElementById("deployFields").style.display = params.action == "deploy" ? "block" : "none";
+            // Updates form values
             actionSelect.value = params.action;
             unitSelect.value = params.unit;
             document.forms["commandForm"].direction.value = params.direction;
@@ -170,18 +183,22 @@
             document.forms["commandForm"].target_id.value = params.target_id;
             document.forms["commandForm"].target_distance.value = params.target_distance;
             document.forms["commandForm"].location.value = params.location;
+            // Positions cursor
             var cursor = document.getElementById("cursor");
             cursor.style.top = (inMapMode ? 0 : currentSection == "action" ? 100 + currentIndex * 20 : currentSection == "unit" ? 200 : 240) + "px";
             cursor.style.left = cursorX + "px";
             cursor.style.display = inMapMode ? "none" : "block";
+            // Updates overlay text
             var overlay = document.getElementById("overlay");
             overlay.innerHTML = inMapMode ? "MAP MODE: (" + parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY + ")" : 
                 currentSection == "action" ? "SELECT COMMAND" : currentSection == "unit" ? "SELECT UNIT" : "SET PARAMETERS";
         }
 
+        // Handles keyboard input for navigation and commands
         function handleKeyDown(event) {
             var key = event.keyCode || event.which;
             if (inMapMode) {
+                // Map mode navigation
                 if (key == 38) { // Up
                     parent.frames["tactical"].moveCursor(0, -1);
                 } else if (key == 40) { // Down
@@ -192,12 +209,14 @@
                     parent.frames["tactical"].moveCursor(1, 0);
                 } else if (key == 13) { // Enter
                     if (params.action == "move") {
+                        // Sets waypoint for move action
                         parent.frames["tactical"].waypoints.push({x: parent.frames["tactical"].cursorX, y: parent.frames["tactical"].cursorY});
                         addLog("Waypoint set at (" + parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY + ")");
                         new Audio("/sounds/lock.wav").play();
                         submitCommand();
                         inMapMode = false;
                     } else if (params.action == "attack") {
+                        // Locks target for attack action
                         params.target_id = parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY;
                         addLog("Target locked at (" + parent.frames["tactical"].cursorX + "," + parent.frames["tactical"].cursorY + ")");
                         new Audio("/sounds/lock.wav").play();
@@ -205,9 +224,10 @@
                         inMapMode = false;
                     }
                 } else if (key == 27) { // Esc
-                    inMapMode = false;
+                    inMapMode = false; // Exits map mode
                 }
             } else {
+                // Action selection
                 if (currentSection == "action") {
                     if (key == 38) { // Up
                         currentIndex = Math.max(0, currentIndex - 1);
@@ -225,6 +245,7 @@
                         cursorY = 100;
                     }
                 } else if (currentSection == "unit") {
+                    // Unit selection
                     if (key == 37) { // Left
                         params.unit = params.unit == "1" ? "2" : "1";
                         cursorX -= 20;
@@ -232,6 +253,7 @@
                         params.unit = params.unit == "1" ? "2" : "1";
                         cursorX += 20;
                     } else if (key == 13) {
+                        // Proceeds to next section or map mode
                         if (params.action == "move" || params.action == "attack") {
                             inMapMode = true;
                         } else if (params.action == "fire" || params.action == "reload") {
@@ -257,6 +279,7 @@
                         cursorY = 100;
                     }
                 } else if (currentSection == "direction") {
+                    // Direction selection for move action
                     var directions = ["forward", "backward", "left", "right"];
                     var idx = directions.indexOf(params.direction);
                     if (key == 37) {
@@ -274,6 +297,7 @@
                     }
                     params.direction = directions[idx];
                 } else if (currentSection == "distance") {
+                    // Distance adjustment for move action
                     var dist = parseFloat(params.distance);
                     if (key == 37) {
                         dist = Math.max(0.1, dist - 0.1);
@@ -292,6 +316,7 @@
                     }
                     params.distance = dist.toFixed(1);
                 } else if (currentSection == "weapon") {
+                    // Weapon selection
                     var weapons = ["revolver_cannon", "riot_gun"];
                     var idx = weapons.indexOf(params.weapon);
                     if (key == 37) {
@@ -311,6 +336,7 @@
                     }
                     params.weapon = weapons[idx];
                 } else if (currentSection == "mode") {
+                    // Mode selection
                     var modes = ["standard", "high_mobility", "maintenance"];
                     var idx = modes.indexOf(params.mode);
                     if (key == 37) {
@@ -330,6 +356,7 @@
                     }
                     params.mode = modes[idx];
                 } else if (currentSection == "formation") {
+                    // Formation selection
                     var formations = ["line", "wedge", "dispersed"];
                     var idx = formations.indexOf(params.formation);
                     if (key == 37) {
@@ -349,6 +376,7 @@
                     }
                     params.formation = formations[idx];
                 } else if (currentSection == "target_id") {
+                    // Target ID selection for attack
                     var id = parseInt(params.target_id.split(",")[0] || 0);
                     if (key == 37) {
                         id = Math.max(0, id - 1);
@@ -365,6 +393,7 @@
                     }
                     params.target_id = id + ",0";
                 } else if (currentSection == "target_distance") {
+                    // Target distance adjustment
                     var dist = parseFloat(params.target_distance);
                     if (key == 37) {
                         dist = Math.max(50, dist - 50);
@@ -383,6 +412,7 @@
                     }
                     params.target_distance = dist.toString();
                 } else if (currentSection == "location") {
+                    // Location selection for deploy action
                     var locations = ["Tokyo Bay", "Shinjuku", "Yokohama"];
                     var idx = locations.indexOf(params.location);
                     if (key == 37) {
@@ -402,6 +432,7 @@
                     }
                     params.location = locations[idx];
                 }
+                // Toggles between action/unit or enters map mode
                 if (key == 32) { // Space
                     if (params.action == "move" || params.action == "attack") {
                         inMapMode = !inMapMode;
@@ -411,23 +442,28 @@
                     }
                 }
             }
+            // Ensures cursor stays within bounds
             cursorX = Math.max(10, Math.min(300, cursorX));
             cursorY = Math.max(100, Math.min(400, cursorY));
             updateUI();
             new Audio("/sounds/click.wav").play();
         }
 
+        // Initializes the UI and event listeners on page load
         window.onload = function() {
-            document.onkeydown = handleKeyDown;
-            updateUI();
-            addLog("Command panel online");
+            document.onkeydown = handleKeyDown; // Binds keydown handler
+            updateUI(); // Sets initial UI state
+            addLog("Command panel online"); // Logs startup message
         };
     </script>
 </head>
 <body>
+    <!-- CRT border image for retro aesthetic -->
     <img src="/images/crt_border.gif" class="crt-border">
+    <!-- Main command panel container -->
     <div class="command">
         <h2 class="blink">Command Panel</h2>
+        <!-- ASCII art for joystick control -->
         <pre class="ascii-joystick">
   [==]=====\\ JOYSTICK CONTROL
   /||\\    |
@@ -438,9 +474,13 @@
 /  /  |/
   O  O  A B
         </pre>
+        <!-- Animated mech arm image -->
         <img src="/images/mech_arm.gif" style="float:right;">
+        <!-- Status overlay display -->
         <div class="overlay" id="overlay">SELECT COMMAND</div>
+        <!-- Command input form -->
         <form name="commandForm">
+            <!-- Action selection dropdown -->
             <select name="action">
                 <option value="">Select Action</option>
                 <option value="status">Status</option>
@@ -455,20 +495,24 @@
                 <option value="formation">Set Formation</option>
                 <option value="attack">Attack</option>
             </select><br><br>
+            <!-- Unit selection dropdown -->
             Unit: <select name="unit">
                 <option value="1">Unit 1</option>
                 <option value="2">Unit 2</option>
             </select><br><br>
+            <!-- Move action parameters -->
             <div id="moveFields" style="display:none;">
                 Direction: <input type="text" name="direction" value="forward"><br>
                 Distance (km): <input type="text" name="distance" value="1.0"><br>
             </div>
+            <!-- Weapon selection for fire/reload actions -->
             <div id="weaponFields" style="display:none;">
                 Weapon: <select name="weapon">
                     <option value="revolver_cannon">Revolver Cannon</option>
                     <option value="riot_gun">Riot Gun</option>
                 </select><br>
             </div>
+            <!-- Mode selection -->
             <div id="modeFields" style="display:none;">
                 Mode: <select name="mode">
                     <option value="standard">Standard</option>
@@ -476,6 +520,7 @@
                     <option value="maintenance">Maintenance</option>
                 </select><br>
             </div>
+            <!-- Formation selection -->
             <div id="formationFields" style="display:none;">
                 Formation: <select name="formation">
                     <option value="line">Line</option>
@@ -483,17 +528,22 @@
                     <option value="dispersed">Dispersed</option>
                 </select><br>
             </div>
+            <!-- Attack action parameters -->
             <div id="attackFields" style="display:none;">
                 Target ID: <input type="text" name="target_id" value="0"><br>
                 Distance (m): <input type="text" name="target_distance" value="500"><br>
             </div>
+            <!-- Deploy action location -->
             <div id="deployFields" style="display:none;">
                 Location: <input type="text" name="location" value="Tokyo Bay"><br>
             </div>
             <br>
+            <!-- Execute command button -->
             <button type="button" onclick="submitCommand()">Execute</button>
         </form>
+        <!-- Blinking cursor for navigation -->
         <div id="cursor" class="cursor blink">></div>
     </div>
 </body>
 </html>
+
