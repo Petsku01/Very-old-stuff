@@ -1,471 +1,503 @@
-; Pyörivä 3D ASCII-kuutio Assemblyssä (Linux)
+; Pyörivä 3D ASCII-kuutio Assemblyssä (Linux x86-64)
 ; nasm -f elf64 cube.asm && ld cube.o -o cube
-; Toimiva 2025
-; Suorita: ./cube (Paina 'q' lopettaaksesi)
+; ./cube (Paina 'q' lopettaaksesi)
 
 section .data
     ; 3D-kuution kärjet (x, y, z) 32-bit floatteina
     vertices: dd -1.0, -1.0, -1.0,  1.0, -1.0, -1.0,  1.0, 1.0, -1.0, -1.0, 1.0, -1.0
               dd -1.0, -1.0,  1.0,  1.0, -1.0,  1.0,  1.0, 1.0,  1.0, -1.0, 1.0,  1.0
+    
     ; Reunat: kärkien indeksiparit
     edges: db 0,1, 1,2, 2,3, 3,0, 4,5, 5,6, 6,7, 7,4, 0,4, 1,5, 2,6, 3,7
-    ; ANSI-värikoodit (vihreä '#')
-    color: db 27, '[', '3', '2', 'm', '#', 27, '[0m'
-    color_len: equ $-color
-    space: db ' '
-    ; Tyhjennä näyttö ja siirrä kursori vasempaan yläkulmaan
-    clear: db 27, '[2J', 27, '[0;0H'
-    clear_len: equ $-clear
-    ; Matemaattiset vakiot (64-bit doubles)
-    pi: dq 3.141592653589793
+    
+    ; ANSI escape codes
+    clear: db 27, '[2J', 27, '[H'
+    clear_len equ $-clear
+    green: db 27, '[32m'
+    green_len equ $-green
+    reset: db 27, '[0m'
+    reset_len equ $-reset
+    newline: db 10
+    
+    ; Matemaattiset vakiot
     angle: dq 0.0
     angle_inc: dq 0.05
-    ; Projektion parametrit
-    distance: dq 4.0
+    distance: dq 5.0
     scale: dq 20.0
-    half_width: dq 40.0
-    half_height: dq 12.0
-    timespec: dq 0, 16000000 ; 16ms for ~60 FPS
-    ; Terminaalin asetukset
-    TERMIOS_SIZE equ 60
-    termios: times TERMIOS_SIZE db 0
-    termios_backup: times TERMIOS_SIZE db 0
+    
     ; Näyttöparametrit
     SCREEN_WIDTH equ 80
     SCREEN_HEIGHT equ 24
+    HALF_WIDTH equ 40
+    HALF_HEIGHT equ 12
+    
+    ; Sleep time (16ms for ~60 FPS)
+    timespec: dq 0, 16666667
 
 section .bss
-    buffer: resb SCREEN_WIDTH*SCREEN_HEIGHT
+    buffer: resb SCREEN_WIDTH * SCREEN_HEIGHT
+    zbuffer: resd SCREEN_WIDTH * SCREEN_HEIGHT
     sin_val: resq 1
     cos_val: resq 1
-    projected: resq 16  ; 2D-projisoidut koordinaatit (x, y 8 kärjelle)
+    projected: resq 16  ; x,y for 8 vertices
     input_char: resb 1
+    termios_backup: resb 60
+    termios_new: resb 60
 
 section .text
 global _start
 
 _start:
-    ; Alusta FPU
+    ; Initialize FPU
     finit
-
-    ; Alusta .bss
-    lea rdi, [buffer]
-    mov rcx, SCREEN_WIDTH*SCREEN_HEIGHT + 2*8 + 16*8 + 1
-    xor al, al
-    rep stosb
-
-    ; Aseta stdin non-blocking
-    mov rax, 72         ; sys_fcntl
-    mov rdi, 0          ; stdin
-    mov rsi, 4          ; F_GETFL
-    syscall
-    cmp rax, -1
-    je error_exit
-    mov rbx, rax        ; Save flags
-    mov rax, 72         ; sys_fcntl
-    mov rsi, 4          ; F_SETFL
-    or rbx, 0x0800      ; O_NONBLOCK
-    mov rdx, rbx
-    syscall
-    cmp rax, -1
-    je error_exit
-
+    
     ; Save terminal settings
+    call save_terminal
+    
+    ; Set terminal to raw mode
+    call setup_terminal
+
+main_loop:
+    ; Check for 'q' key
+    call check_input
+    test al, al
+    jnz cleanup
+    
+    ; Clear screen
+    call clear_screen
+    
+    ; Clear buffers
+    call clear_buffers
+    
+    ; Calculate rotation
+    call calculate_rotation
+    
+    ; Project vertices
+    call project_vertices
+    
+    ; Draw edges
+    call draw_edges
+    
+    ; Display buffer
+    call display_buffer
+    
+    ; Update angle
+    fld qword [angle]
+    fadd qword [angle_inc]
+    fstp qword [angle]
+    
+    ; Sleep
+    mov rax, 35         ; sys_nanosleep
+    lea rdi, [timespec]
+    xor rsi, rsi
+    syscall
+    
+    jmp main_loop
+
+cleanup:
+    call restore_terminal
+    
+    mov rax, 60         ; sys_exit
+    xor rdi, rdi
+    syscall
+
+; Save terminal settings
+save_terminal:
     mov rax, 16         ; sys_ioctl
-    mov rdi, 0          ; stdin
+    xor rdi, rdi        ; stdin
     mov rsi, 0x5401     ; TCGETS
     lea rdx, [termios_backup]
     syscall
-    cmp rax, -1
-    je error_exit
+    ret
 
-    ; Disable canonical mode and echo
-    lea rdi, [termios]
+; Setup terminal for raw mode
+setup_terminal:
+    ; Copy settings
     lea rsi, [termios_backup]
-    mov rcx, TERMIOS_SIZE/8
+    lea rdi, [termios_new]
+    mov rcx, 60/8
     rep movsq
-    mov eax, [termios+12] ; c_lflag
-    and eax, ~(0x02 | 0x08) ; ~ICANON & ~ECHO
-    mov [termios+12], eax
+    
+    ; Disable canonical mode and echo
+    mov eax, [termios_new + 12]  ; c_lflag
+    and eax, ~(2 | 8)             ; ~ICANON & ~ECHO
+    mov [termios_new + 12], eax
+    
+    ; Apply new settings
     mov rax, 16         ; sys_ioctl
-    mov rdi, 0          ; stdin
+    xor rdi, rdi        ; stdin
     mov rsi, 0x5402     ; TCSETS
-    lea rdx, [termios]
+    lea rdx, [termios_new]
     syscall
-    cmp rax, -1
-    je error_exit
+    
+    ; Set non-blocking mode
+    mov rax, 72         ; sys_fcntl
+    xor rdi, rdi        ; stdin
+    mov rsi, 3          ; F_GETFL
+    syscall
+    
+    mov rdx, rax
+    or rdx, 0x800       ; O_NONBLOCK
+    mov rax, 72         ; sys_fcntl
+    xor rdi, rdi
+    mov rsi, 4          ; F_SETFL
+    syscall
+    ret
 
-; Päälooppi
-main_loop:
-    ; Tarkista näppäimistö ('q' lopettaa)
+; Restore terminal settings
+restore_terminal:
+    mov rax, 16         ; sys_ioctl
+    xor rdi, rdi        ; stdin
+    mov rsi, 0x5402     ; TCSETS
+    lea rdx, [termios_backup]
+    syscall
+    ret
+
+; Check for input
+check_input:
     mov rax, 0          ; sys_read
-    mov rdi, 0          ; stdin
+    xor rdi, rdi        ; stdin
     lea rsi, [input_char]
     mov rdx, 1
     syscall
-    cmp rax, 0
-    jle next_char_check
+    
+    xor al, al
+    cmp rax, 1
+    jne .done
     cmp byte [input_char], 'q'
-    je restore_term
-next_char_check:
+    jne .done
+    mov al, 1
+.done:
+    ret
 
-    ; Tyhjennä näyttö
+; Clear screen
+clear_screen:
     mov rax, 1          ; sys_write
     mov rdi, 1          ; stdout
     lea rsi, [clear]
     mov rdx, clear_len
-    call write_buffer
+    syscall
+    ret
 
-    ; Laske sini ja kosini
+; Clear buffers
+clear_buffers:
+    ; Clear display buffer
+    lea rdi, [buffer]
+    mov rcx, SCREEN_WIDTH * SCREEN_HEIGHT
+    mov al, ' '
+    rep stosb
+    
+    ; Clear z-buffer
+    lea rdi, [zbuffer]
+    mov rcx, SCREEN_WIDTH * SCREEN_HEIGHT
+    mov eax, 0x7FFFFFFF  ; Max int
+    rep stosd
+    ret
+
+; Calculate sin and cos
+calculate_rotation:
     fld qword [angle]
     fsincos
     fstp qword [cos_val]
     fstp qword [sin_val]
+    ret
 
-    ; Projisoi 3D-kärjet 2D:ksi
-    xor rbx, rbx        ; Kärkien laskuri
-project_loop:
-    cmp rbx, 8
-    jge project_done
-
-    ; Lataa kärki (x, y, z)
-    mov rsi, rbx
-    lea rsi, [vertices + rsi*12] ; 3 floats * 4 bytes = 12 bytes
+; Project vertices to 2D
+project_vertices:
+    xor r12, r12        ; vertex counter
+    
+.next_vertex:
+    cmp r12, 8
+    jge .done
+    
+    ; Load vertex (x, y, z)
+    lea rsi, [vertices + r12*12]
+    
+    ; Load coordinates
     fld dword [rsi]     ; x
-    fld dword [rsi+4]   ; y
+    fld dword [rsi+4]   ; y  
     fld dword [rsi+8]   ; z
-
-    ; Y-akselin kierto
-    fld st1             ; y
-    fmul qword [cos_val]
-    fld st3             ; z
-    fmul qword [sin_val]
-    fsubp
-    fstp st1            ; Päivitä y
-    fld st2             ; z
-    fmul qword [cos_val]
-    fld st2             ; y
-    fmul qword [sin_val]
-    faddp
-    fstp st3            ; Päivitä z
-
-    ; X-akselin kierto
-    fld st1             ; y
-    fmul qword [cos_val]
-    fld st2             ; z
-    fmul qword [sin_val]
-    fsubp
-    fstp st1            ; Päivitä y
-    fld st2             ; z
-    fmul qword [cos_val]
-    fld st2             ; y
-    fmul qword [sin_val]
-    faddp
-    fstp st3            ; Päivitä z
-
-    ; Perspektiiviprojektio
-    fld st2             ; z
-    fadd qword [distance]
+    
+    ; Rotate around Y axis: x' = x*cos - z*sin, z' = x*sin + z*cos
+    fld st0             ; z z y x
+    fld qword [sin_val] ; sin z z y x
+    fmulp               ; z*sin z y x
+    fld st3             ; x z*sin z y x
+    fld qword [cos_val] ; cos x z*sin z y x
+    fmulp               ; x*cos z*sin z y x
+    fsubp               ; x' z y x
+    fxch st2            ; y z x' x
+    fxch st1            ; z y x' x
+    fld qword [cos_val] ; cos z y x' x
+    fmulp               ; z*cos y x' x
+    fld st3             ; x z*cos y x' x
+    fld qword [sin_val] ; sin x z*cos y x' x
+    fmulp               ; x*sin z*cos y x' x
+    faddp               ; z' y x' x
+    fxch st3            ; x y x' z'
+    fstp st0            ; y x' z'
+    fxch st1            ; x' y z'
+    
+    ; Rotate around X axis: y' = y*cos - z*sin, z' = y*sin + z*cos
+    fld st2             ; z' x' y z'
+    fld qword [sin_val] ; sin z' x' y z'
+    fmulp               ; z'*sin x' y z'
+    fld st2             ; y z'*sin x' y z'
+    fld qword [cos_val] ; cos y z'*sin x' y z'
+    fmulp               ; y*cos z'*sin x' y z'
+    fsubp               ; y' x' y z'
+    fxch st2            ; y x' y' z'
+    fld qword [sin_val] ; sin y x' y' z'
+    fmulp               ; y*sin x' y' z'
+    fld st3             ; z' y*sin x' y' z'
+    fld qword [cos_val] ; cos z' y*sin x' y' z'
+    fmulp               ; z'*cos y*sin x' y' z'
+    faddp               ; z'' x' y' z'
+    fxch st3            ; z' x' y' z''
+    fstp st0            ; x' y' z''
+    
+    ; Perspective projection
+    fld st2             ; z'' x' y' z''
+    fadd qword [distance] ; z+d x' y' z''
+    
+    ; Check if behind camera
     fldz
     fcomip st1
+    jae .skip_vertex
+    
+    ; Project x
+    fld qword [scale]   ; scale z+d x' y' z''
+    fdiv st1            ; scale/(z+d) z+d x' y' z''
+    fmul st2            ; x_proj z+d x' y' z''
+    fiadd dword [const_half_width]
+    fistp qword [projected + r12*16]
+    
+    ; Project y
+    fld qword [scale]   ; scale z+d x' y' z''
+    fdiv st1            ; scale/(z+d) z+d x' y' z''
+    fmul st3            ; y_proj z+d x' y' z''
+    fiadd dword [const_half_height]
+    fistp qword [projected + r12*16 + 8]
+    
+    ; Clean FPU stack
+    fstp st0            ; z+d x' y' z''
+    fstp st0            ; x' y' z''
+    fstp st0            ; y' z''
+    fstp st0            ; z''
+    fstp st0            ; empty
+    
+    jmp .continue
+    
+.skip_vertex:
+    ; Mark as invalid
+    mov qword [projected + r12*16], -1
+    mov qword [projected + r12*16 + 8], -1
+    
+    ; Clean FPU stack
     fstp st0
-    jbe skip_vertex     ; Skip if z + distance <= 0
-    fld qword [scale]
-    fdivrp              ; scale / (z + distance)
-    fld st1             ; x
-    fmul st1
-    fadd qword [half_width]
-    fistp qword [projected + rbx*16]  ; Tallenna x
-    mov rax, [projected + rbx*16]
-    cmp rax, 0
-    jl skip_vertex
-    cmp rax, SCREEN_WIDTH-1
-    jg skip_vertex
-    fld st2             ; y
-    fmul st1
-    fadd qword [half_height]
-    fistp qword [projected + rbx*16 + 8] ; Tallenna y
-    mov rax, [projected + rbx*16 + 8]
-    cmp rax, 0
-    jl skip_vertex
-    cmp rax, SCREEN_HEIGHT-1
-    jg skip_vertex
-    fstp st0            ; Poista scale
-    fstp st0            ; Poista z
-    fstp st0            ; Poista y
-    fstp st0            ; Poista x
-    jmp next_vertex
-skip_vertex:
-    fstp st0            ; Poista scale tai z
-    fstp st0            ; Poista z
-    fstp st0            ; Poista y
-    fstp st0            ; Poista x
-    mov qword [projected + rbx*16], 0
-    mov qword [projected + rbx*16 + 8], 0
-next_vertex:
-    inc rbx
-    jmp project_loop
-
-project_done:
-    ; Tyhjennä puskuri
-    lea rdi, [buffer]
-    mov rcx, SCREEN_WIDTH*SCREEN_HEIGHT
-    mov al, ' '
-    rep stosb
-
-    ; Piirrä reunat
-    xor rbx, rbx        ; Reunojen laskuri
-draw_loop:
-    cmp rbx, 12
-    jge draw_done
-
-    ; Hae reunan kärjet
-    movzx rsi, byte [edges + rbx*2]
-    movzx rdi, byte [edges + rbx*2 + 1]
-
-    ; Hae projisoidut koordinaatit
-    mov rax, [projected + rsi*16]
-    mov rcx, [projected + rsi*16 + 8]
-    mov rdx, [projected + rdi*16]
-    mov r8, [projected + rdi*16 + 8]
-
-    ; Tarkista, onko kärjet kelvollisia
-    cmp rax, 0
-    jle skip_edge
-    cmp rcx, 0
-    jle skip_edge
-    cmp rdx, 0
-    jle skip_edge
-    cmp r8, 0
-    jle skip_edge
-
-    ; Piirrä viiva
-    push rbx
-    call draw_line
-    pop rbx
-
-skip_edge:
-    inc rbx
-    jmp draw_loop
-
-draw_done:
-    ; Näytä puskuri
-    lea rsi, [buffer]
-    mov rcx, SCREEN_WIDTH*SCREEN_HEIGHT
-display_loop:
-    cmp rcx, 0
-    je display_done
-
-    lodsb
-    cmp al, ' '
-    je skip_char
-    mov rax, 1          ; sys_write
-    mov rdi, 1          ; stdout
-    lea rsi, [color]
-    mov rdx, color_len
-    call write_buffer
-    jmp next_char
-skip_char:
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [space]
-    mov rdx, 1
-    call write_buffer
-next_char:
-    dec rcx
-    jmp display_loop
-
-display_done:
-    ; Päivitä kulma
-    fld qword [angle]
-    fadd qword [angle_inc]
-    fstp qword [angle]
-
-    ; Nuku ~16ms (60 FPS)
-    mov rax, 35         ; sys_nanosleep
-    lea rdi, [timespec]
-    mov qword [timespec], 0
-    mov qword [timespec+8], 16000000
-    xor rsi, rsi
-    syscall
-    cmp rax, -4         ; -EINTR
-    je main_loop
-    cmp rax, -1
-    je error_exit
-
-    jmp main_loop
-
-restore_term:
-    mov rax, 16         ; sys_ioctl
-    mov rdi, 0          ; stdin
-    mov rsi, 0x5402     ; TCSETS
-    lea rdx, [termios_backup]
-    syscall
-    jmp exit
-
-; Kirjoita puskuri, käsittele osittaiset kirjoitukset
-write_buffer:
-    mov r10, rdx        ; Save total length
-.write_loop:
-    mov rax, 1          ; sys_write
-    syscall
-    cmp rax, -1
-    je error_exit
-    add rsi, rax        ; Advance buffer
-    sub r10, rax        ; Decrease remaining length
-    jz .done            ; All bytes written
-    mov rdx, r10        ; Update length
-    jmp .write_loop
+    fstp st0
+    fstp st0
+    fstp st0
+    
+.continue:
+    inc r12
+    jmp .next_vertex
+    
 .done:
     ret
 
-; Bresenhamin viiva-algoritmi
-draw_line:
-    ; rax, rcx: alku (x, y)
-    ; rdx, r8: loppu (x, y)
-    cmp rax, rdx
-    jne not_same_point
-    cmp rcx, r8
-    je plot_single_point
-not_same_point:
-    mov r9, rax
-    sub rax, rdx
-    jge no_abs_dx
-    neg rax
-no_abs_dx:
-    mov r10, rcx
-    sub rcx, r8
-    jge no_abs_dy
-    neg rcx
-no_abs_dy:
-    cmp rax, 0
-    je vertical_line
-    cmp rcx, 0
-    je horizontal_line
-    cmp rax, rcx
-    jge steep
-    xchg rax, rcx
-    xchg r9, r10
-    xchg rdx, r8
-steep:
-    mov r11, 1
-    cmp r9, rdx
-    jle no_swap_x
-    xchg r9, rdx
-    xchg r10, r8
-no_swap_x:
-    mov r12, 1
-    cmp r10, r8
-    jle no_neg_y
-    neg r12
-no_neg_y:
-    mov rsi, rax
-    shr rsi, 1
-    mov rbx, r9
-    mov rbp, r10
-line_loop:
-    cmp rbx, rdx
-    jg line_done
-    ; Piirrä pikseli
-    cmp rbx, 0
-    jl no_plot
-    cmp rbx, SCREEN_WIDTH-1
-    jge no_plot
-    cmp rbp, 0
-    jl no_plot
-    cmp rbp, SCREEN_HEIGHT-1
-    jg no_plot
-    mov rdi, rbp
-    imul rdi, SCREEN_WIDTH
-    add rdi, rbx
-    mov byte [buffer + rdi], '#'
-no_plot:
-    add rsi, rcx
-    cmp rsi, rax
-    jl no_step
-    sub rsi, rax
-    add rbp, r12
-no_step:
-    inc rbx
-    jmp line_loop
-plot_single_point:
-    cmp rax, 0
-    jl line_done
-    cmp rax, SCREEN_WIDTH-1
-    jge line_done
-    cmp rcx, 0
-    jl line_done
-    cmp rcx, SCREEN_HEIGHT-1
-    jg line_done
-    mov rdi, rcx
-    imul rdi, SCREEN_WIDTH
-    add rdi, rax
-    mov byte [buffer + rdi], '#'
-    jmp line_done
-vertical_line:
-    cmp r10, r8
-    jle no_swap_v
-    xchg r10, r8
-no_swap_v:
-    mov rbx, r9
-    mov rbp, r10
-vline_loop:
-    cmp rbp, r8
-    jg line_done
-    cmp rbx, 0
-    jl no_vplot
-    cmp rbx, SCREEN_WIDTH-1
-    jge no_vplot
-    cmp rbp, 0
-    jl no_vplot
-    cmp rbp, SCREEN_HEIGHT-1
-    jg no_vplot
-    mov rdi, rbp
-    imul rdi, SCREEN_WIDTH
-    add rdi, rbx
-    mov byte [buffer + rdi], '#'
-no_vplot:
-    inc rbp
-    jmp vline_loop
-horizontal_line:
-    cmp r9, rdx
-    jle no_swap_h
-    xchg r9, rdx
-no_swap_h:
-    mov rbx, r9
-    mov rbp, r10
-hline_loop:
-    cmp rbx, rdx
-    jg line_done
-    cmp rbx, 0
-    jl no_hplot
-    cmp rbx, SCREEN_WIDTH-1
-    jge no_hplot
-    cmp rbp, 0
-    jl no_hplot
-    cmp rbp, SCREEN_HEIGHT-1
-    jg no_hplot
-    mov rdi, rbp
-    imul rdi, SCREEN_WIDTH
-    add rdi, rbx
-    mov byte [buffer + rdi], '#'
-no_hplot:
-    inc rbx
-    jmp hline_loop
-line_done:
+const_half_width: dd 40
+const_half_height: dd 12
+
+; Draw edges
+draw_edges:
+    xor r12, r12        ; edge counter
+    
+.next_edge:
+    cmp r12, 12
+    jge .done
+    
+    ; Get vertex indices
+    movzx rax, byte [edges + r12*2]
+    movzx rdx, byte [edges + r12*2 + 1]
+    
+    ; Get coordinates
+    mov r8, [projected + rax*16]
+    mov r9, [projected + rax*16 + 8]
+    mov r10, [projected + rdx*16]
+    mov r11, [projected + rdx*16 + 8]
+    
+    ; Check validity
+    cmp r8, 0
+    jl .skip
+    cmp r10, 0
+    jl .skip
+    
+    ; Draw line
+    call draw_line
+    
+.skip:
+    inc r12
+    jmp .next_edge
+    
+.done:
     ret
 
-exit:
-    mov rax, 60         ; sys_exit
-    xor rdi, rdi        ; status 0
-    syscall
+; Simple line drawing (r8,r9) to (r10,r11)
+draw_line:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    
+    ; Calculate deltas
+    mov rax, r10
+    sub rax, r8         ; dx
+    mov rbx, r11
+    sub rbx, r9         ; dy
+    
+    ; Get absolute values
+    mov r12, rax
+    sar r12, 63
+    xor rax, r12
+    sub rax, r12        ; |dx|
+    
+    mov r12, rbx
+    sar r12, 63
+    xor rbx, r12
+    sub rbx, r12        ; |dy|
+    
+    ; Determine step direction
+    mov r12, 1          ; x_step
+    cmp r8, r10
+    jle .x_positive
+    neg r12
+.x_positive:
+    
+    mov r13, 1          ; y_step
+    cmp r9, r11
+    jle .y_positive
+    neg r13
+.y_positive:
+    
+    ; Current position
+    mov r14, r8         ; x
+    mov r15, r9         ; y
+    
+    ; Determine dominant axis
+    cmp rax, rbx
+    jge .x_dominant
+    
+    ; Y-dominant
+    mov rcx, rbx        ; steps = |dy|
+    neg rax
+    sar rbx, 1          ; error = |dy|/2
+    
+.y_loop:
+    call plot_point
+    add rbx, rax        ; error += |dx|
+    jle .y_no_x_step
+    add r14, r12        ; x += x_step
+    sub rbx, rax        ; error -= |dy|
+    sub rbx, rax
+    neg rax
+.y_no_x_step:
+    add r15, r13        ; y += y_step
+    dec rcx
+    jns .y_loop
+    jmp .done
+    
+.x_dominant:
+    ; X-dominant
+    mov rcx, rax        ; steps = |dx|
+    neg rbx
+    sar rax, 1          ; error = |dx|/2
+    
+.x_loop:
+    call plot_point
+    add rax, rbx        ; error += |dy|
+    jle .x_no_y_step
+    add r15, r13        ; y += y_step
+    sub rax, rbx        ; error -= |dx|
+    sub rax, rbx
+    neg rbx
+.x_no_y_step:
+    add r14, r12        ; x += x_step
+    dec rcx
+    jns .x_loop
+    
+.done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
 
-error_exit:
-    mov rax, 16         ; sys_ioctl
-    mov rdi, 0          ; stdin
-    mov rsi, 0x5402     ; TCSETS
-    lea rdx, [termios_backup]
+; Plot point at (r14, r15)
+plot_point:
+    ; Bounds check
+    cmp r14, 0
+    jl .skip
+    cmp r14, SCREEN_WIDTH
+    jge .skip
+    cmp r15, 0
+    jl .skip
+    cmp r15, SCREEN_HEIGHT
+    jge .skip
+    
+    ; Calculate buffer offset
+    mov rax, r15
+    imul rax, SCREEN_WIDTH
+    add rax, r14
+    
+    ; Set character
+    mov byte [buffer + rax], '#'
+    
+.skip:
+    ret
+
+; Display buffer
+display_buffer:
+    ; Write green color code
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [green]
+    mov rdx, green_len
     syscall
-    mov rax, 60
-    mov rdi, 1          ; status 1
+    
+    ; Display buffer line by line
+    xor r12, r12        ; line counter
+    
+.next_line:
+    cmp r12, SCREEN_HEIGHT
+    jge .done
+    
+    ; Write line
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, r12
+    imul rsi, SCREEN_WIDTH
+    lea rsi, [buffer + rsi]
+    mov rdx, SCREEN_WIDTH
     syscall
+    
+    ; Write newline
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [newline]
+    mov rdx, 1
+    syscall
+    
+    inc r12
+    jmp .next_line
+    
+.done:
+    ; Reset color
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [reset]
+    mov rdx, reset_len
+    syscall
+    ret
