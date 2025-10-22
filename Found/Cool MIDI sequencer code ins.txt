@@ -1,0 +1,56 @@
+// Simplified MIDI sequencer code inspired by ReBirth RB-338's pattern control
+#include <iostream>
+#include <vector>
+
+class ReBirthPattern {
+private:
+    std::vector<int> steps; // 16-step sequencer for notes
+    int currentStep;
+    const int MIDI_CHANNEL = 1;
+    const int NOTE_ON = 0x90; // MIDI Note On status
+    const int NOTE_OFF = 0x80; // MIDI Note Off status
+
+public:
+    ReBirthPattern() : currentStep(0) {
+        steps.resize(16, 0); // Initialize 16 steps, 0 = no note
+    }
+
+    // Set note at specific step (e.g., C3 = 60)
+    void setNote(int step, int note) {
+        if (step >= 0 && step < 16) {
+            steps[step] = note;
+        }
+    }
+
+    // Simulate one step of the sequencer
+    void playStep(int velocity) {
+        if (steps[currentStep] != 0) {
+            sendMidiMessage(NOTE_ON, steps[currentStep], velocity);
+            // Assume note duration is one step
+            sendMidiMessage(NOTE_OFF, steps[currentStep], 0);
+        }
+        currentStep = (currentStep + 1) % 16; // Loop back to start
+    }
+
+private:
+    void sendMidiMessage(int status, int note, int velocity) {
+        // Simulated MIDI output (in reality, this would interface with a MIDI driver)
+        std::cout << "MIDI: Status=" << status << ", Note=" << note 
+                  << ", Velocity=" << velocity << std::endl;
+    }
+};
+
+// Example usage
+int main() {
+    ReBirthPattern pattern;
+    pattern.setNote(0, 60);  // C3 on step 1
+    pattern.setNote(4, 62);  // D3 on step 5
+    pattern.setNote(8, 64);  // E3 on step 9
+
+    // Simulate playing 16 steps
+    for (int i = 0; i < 16; i++) {
+        std::cout << "Step " << i << ": ";
+        pattern.playStep(100); // Velocity = 100
+    }
+    return 0;
+}
